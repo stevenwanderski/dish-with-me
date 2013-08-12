@@ -1,0 +1,152 @@
+diff --git a/date.module b/date.module
+index 4f6a013..2092faa 100644
+--- a/date.module
++++ b/date.module
+@@ -68,6 +68,7 @@ function date_theme() {
+   );
+   $themes = array(
+     'date_combo' => $base + array('render element' => 'element'),
++    'date_form_element' => $base + array('render element' => 'element'),
+     'date_text_parts' => $base + array('render element' => 'element'),
+     'date' => $base + array('render element' => 'element'),
+     'date_display_single' => $base + array(
+diff --git a/date.theme b/date.theme
+index 70c6be4..c203587 100644
+--- a/date.theme
++++ b/date.theme
+@@ -323,7 +323,7 @@ function theme_date_combo($variables) {
+     '#title' => t($element['#title']) . ' ' . ($element['#delta'] > 0 ? intval($element['#delta'] + 1) : ''),
+     '#value' => '',
+     '#description' => !empty($element['#fieldset_description']) ? $element['#fieldset_description'] : '',
+-    '#attributes' => array(),
++    '#attributes' => array('class' => array('date-combo')),
+     '#children' => $element['#children'],
+   );
+   return theme('fieldset', array('element' => $fieldset));
+@@ -352,4 +352,29 @@ function theme_date_text_parts($variables) {
+   }
+ }
+ 
++/**
++ * Render a date combo as a form element.
++ */
++function theme_date_form_element($variables) {
++  $element = &$variables['element'];
++
++  // Detect whether element is multiline.
++  $count = preg_match_all('`<(?:div|span)\b[^>]* class="[^"]*\b(?:date-no-float|date-clear)\b`', $element['#children'], $matches, PREG_OFFSET_CAPTURE);
++  $multiline = FALSE;
++  if ($count > 1) {
++    $multiline = TRUE;
++  }
++  elseif ($count) {
++    $before = substr($element['#children'], 0, $matches[0][0][1]);
++    if (preg_match('`<(?:div|span)\b[^>]* class="[^"]*\bdate-float\b`', $before)) {
++      $multiline = TRUE;
++    }
++  }
++
++  // Wrap children with a div and add an extra class if element is multiline.
++  $element['#children'] = '<div class="date-form-element-content'. ($multiline ? ' date-form-element-content-multiline' : '') .'">'. $element['#children'] .'</div>';
++
++  return theme('form_element', $variables);
++}
++
+ /** @} End of addtogroup themeable */
+diff --git a/date_admin.inc b/date_admin.inc
+index f5a345b..de7bec8 100644
+--- a/date_admin.inc
++++ b/date_admin.inc
+@@ -395,6 +395,13 @@ function _date_field_widget_settings_form($field, $instance) {
+     }
+   }
+ 
++  $form['advanced']['no_fieldset'] = array(
++    '#type' => 'checkbox',
++    '#title' => t('Render as a regular field'),
++    '#default_value' => !empty($settings['no_fieldset']),
++    '#description' => t('Whether to render this field as a regular field instead of a fieldset. The date field elements are wrapped in a fieldset by default, and may not display well without it.'),
++  );
++
+   $context = array(
+     'field' => $field,
+     'instance' => $instance,
+diff --git a/date_api/date.css b/date_api/date.css
+index 9b72ecd..f900f2a 100644
+--- a/date_api/date.css
++++ b/date_api/date.css
+@@ -52,9 +52,11 @@
+ 
+ /* The exposed Views form doesn't need some of these styles */
+ .container-inline-date .date-padding {
+-  padding: 10px;
+   float: left;
+ }
++fieldset.date-combo .container-inline-date .date-padding {
++  padding: 10px;
++}
+ .views-exposed-form .container-inline-date .date-padding {
+   padding: 0;
+ }
+@@ -186,3 +188,11 @@ div.date-calendar-day span.year {
+ .date-year-range-select {
+   margin-right: 1em;
+ }
++
++.date-form-element-content {
++}
++
++.date-form-element-content-multiline {
++  padding: 10px;
++  border: 1px solid #CCC;
++}
+diff --git a/date_elements.inc b/date_elements.inc
+index 20620ed..6bc56bc 100644
+--- a/date_elements.inc
++++ b/date_elements.inc
+@@ -125,6 +125,12 @@ function date_field_widget_form(&$form, &$form_state, $field, $instance, $langco
+       );
+   }
+ 
++  // Make changes if instance is set to be rendered as a regular field.
++  if (!empty($instance['widget']['settings']['no_fieldset'])) {
++    $element['#title'] = check_plain($instance['label']);
++    $element['#theme_wrappers'] = ($field['cardinality'] == 1) ? array('date_form_element') : array();
++  }
++
+   return $element;
+ }
+ 
+@@ -403,6 +409,14 @@ function date_combo_element_process($element, &$form_state, $form) {
+     $element[$from_field]['#date_title'] = $instance['label'];
+   }
+ 
++  // Make changes if instance is set to be rendered as a regular field.
++  if (!empty($instance['widget']['settings']['no_fieldset'])) {
++    unset($element[$from_field]['#description']);
++    if (!empty($field['settings']['todate'])) {
++      $element['#description'] .= '<span class="js-hide"> '. t("Empty 'End date' values will use the 'Start date' values.") .'</span>';
++    }
++  }
++
+   $context = array(
+    'field' => $field,
+    'instance' => $instance,
+diff --git a/date_repeat_field/date_repeat_field.module b/date_repeat_field/date_repeat_field.module
+index 675ed02..8644274 100644
+--- a/date_repeat_field/date_repeat_field.module
++++ b/date_repeat_field/date_repeat_field.module
+@@ -257,6 +257,13 @@ function date_repeat_field_field_widget_form_alter(&$element, &$form_state, $con
+         '#suffix' => '</div>',
+         '#default_value' => isset($items[$delta]['rrule']) && !empty($items[$delta]['rrule']) ? 1 : 0,
+       );
++
++      // Make changes if instance is set to be rendered as a regular field.
++      if (!empty($instance['widget']['settings']['no_fieldset'])) {
++        $element['#title'] = check_plain($instance['label']);
++        $element['#description'] = field_filter_xss($instance['description']);
++        $element['#theme_wrappers'] = array('date_form_element');
++      }
+     }
+   }
+ }
